@@ -1,0 +1,2 @@
+cloudscraper>=1.2.71
+PyQt6>=6.11.0

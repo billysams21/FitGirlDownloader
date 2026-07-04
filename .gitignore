@@ -1,0 +1,27 @@
+# Downloaded files
+*.rar
+*.zip
+*.7z
+*.001
+*.part*.rar
+
+# Text lists
+link.txt
+
+# Temporary / Debug files
+test_cf*.py
+page.html
+ui_downloader.py
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.venv/
+env/
+.env
+
+# OS Files
+Thumbs.db
+.DS_Store
