@@ -412,57 +412,131 @@ class MainWindow(QMainWindow):
         try:
             real_links = []
             with sync_playwright() as p:
-                # Local MS Edge frequently crashes with Playwright's headless=False injection.
-                # So we use the bundled Chromium that Playwright downloaded automatically.
                 browser = p.chromium.launch(headless=False)
-                        
                 context = browser.new_context(user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
                 page = context.new_page()
                 
                 page.goto(task.link)
-                time.sleep(2)
                 
+                # Check for Captcha
                 pow_box = page.locator(".pow-captcha__box")
                 if pow_box.count() > 0:
-                    pow_box.click(force=True)
-                    for _ in range(20):
+                    try:
+                        # Attempt JS click first to avoid invisible ad overlays
+                        pow_box.evaluate("element => element.click()")
+                    except:
+                        # Fallback to physical click, but catch the ad popup!
+                        try:
+                            with page.expect_popup(timeout=3000) as popup_info:
+                                pow_box.click(force=True)
+                            popup_info.value.close()
+                            # Click it again now that the ad is gone
+                            pow_box.evaluate("element => element.click()")
+                        except:
+                            pass
+                            
+                    # Close any random popups that spawn while waiting
+                    def handle_popup(popup):
+                        try:
+                            popup.close()
+                        except:
+                            pass
+                    page.on("popup", handle_popup)
+                            
+                    # Wait continuously as long as the captcha box is visible on the screen
+                    while True:
                         if task.cancel_flag:
                             browser.close()
                             task.status = "Cancelled"
                             return
                         time.sleep(1)
-                        if page.locator("button.cnlButton, a[href^='/Link/']").count() > 0:
+                        if page.locator(".pow-captcha__box").count() == 0:
+                            print("Captcha box disappeared!")
                             break
                             
-                time.sleep(2)
-                links = page.locator("a[href^='/Link/'], a[onclick*='openLink']").all()
+                    # Remove the popup handler before moving to the links phase
+                    page.remove_listener("popup", handle_popup)
+                    
+                    # Give it a couple extra seconds to fully load the table after the captcha resolves
+                    time.sleep(3)
+                else:
+                    time.sleep(3) # Wait for page to render if no captcha
                 
-                for l in links:
+                # We expect a table of files now
+                # Let's target the buttons specifically for "fuckingfast" or generic download buttons
+                # Based on the user's recording, the button is inside a row containing the filename and host.
+                
+                # Find all buttons that contain /Link/ or onclick=openLink
+                links = page.locator("a[href^='/Link/'], a[onclick*='openLink'], button[onclick*='openLink']").all()
+                
+                # If there are none, maybe it's just one big redirect link
+                if not links:
+                    print("No explicit link buttons found. Checking table rows...")
+                    rows = page.locator("tr").all()
+                    for row in rows:
+                        if "fuckingfast" in row.inner_text().lower():
+                            btn = row.locator("button, a").first
+                            if btn.count() > 0:
+                                links.append(btn)
+                
+                print(f"Found {len(links)} links to process.")
+                
+                for i, l in enumerate(links):
                     if task.cancel_flag:
                         break
                     try:
-                        href = l.get_attribute("href")
-                        onclick = l.get_attribute("onclick")
+                        # Click the link, expect a popup
+                        with page.expect_popup(timeout=15000) as popup_info:
+                            try:
+                                l.evaluate("element => element.click()")
+                            except:
+                                l.click(force=True)
                         
-                        target_url = None
-                        if href and "/Link/" in href:
-                            target_url = "https://filecrypt.cc" + href if href.startswith("/") else href
-                        elif onclick and "openLink" in onclick:
-                            m = re.search(r"openLink\(['\"]([^'\"]+)['\"]\)", onclick)
-                            if m:
-                                target_url = f"https://filecrypt.cc/Link/{m.group(1)}.html"
+                        popup = popup_info.value
+                        popup.wait_for_load_state("domcontentloaded")
+                        time.sleep(2)
+                        
+                        # Handle the interstitial "Go to website" or "Skip ad" screen
+                        for _ in range(3):
+                            if "fuckingfast.co" in popup.url:
+                                break
+                            
+                            # Check for "Go to website"
+                            skip_link = popup.get_by_role("link", name="Go to website")
+                            if skip_link.count() > 0:
+                                try:
+                                    with popup.expect_popup(timeout=5000) as ad_info:
+                                        skip_link.click(force=True)
+                                    ad_info.value.close() # Close the ad popup
+                                except Exception:
+                                    pass
+                                time.sleep(1)
                                 
-                        if target_url:
-                            new_page = context.new_page()
-                            new_page.goto(target_url)
-                            new_page.wait_for_load_state("domcontentloaded")
-                            time.sleep(2)
-                            final_url = new_page.url
-                            if "fuckingfast" in final_url:
-                                real_links.append(final_url)
-                            new_page.close()
-                    except Exception:
-                        pass
+                            # Check for "Skip ad"
+                            skip_btn = popup.get_by_text("Skip ad")
+                            if skip_btn.count() > 0:
+                                try:
+                                    skip_btn.click(force=True)
+                                except:
+                                    pass
+                                time.sleep(2)
+                        
+                        final_url = popup.url
+                        if "fuckingfast.co" in final_url:
+                            # Strip cloudflare tracking tokens if they get appended
+                            clean_url = final_url.split('?')[0]
+                            if '#' in final_url:
+                                clean_url += '#' + final_url.split('#')[-1]
+                            real_links.append(clean_url)
+                        else:
+                            # Not a fuckingfast link or still an ad, close it
+                            pass
+                        popup.close()
+                    except Exception as e:
+                        try:
+                            popup.close()
+                        except:
+                            pass
                 browser.close()
                 
             if real_links:
