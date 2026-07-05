@@ -29,8 +29,8 @@ class DownloadTask:
         else:
             self.folder_name = self.filename.rsplit('.', 1)[0]
             
-        self.save_dir = os.path.join(self.base_save_dir, self.folder_name)
-        self.filepath = os.path.join(self.save_dir, self.filename)
+        self.save_dir = os.path.normpath(os.path.join(self.base_save_dir, self.folder_name))
+        self.filepath = os.path.normpath(os.path.join(self.save_dir, self.filename))
         
         self.status = "Queued"  # Queued, Pending, Starting..., Downloading, Paused, Cancelled, Completed, Extracting..., Extracted, Error
         self.progress = 0.0
@@ -151,7 +151,7 @@ class MainWindow(QMainWindow):
     def browse_dir(self):
         folder = QFileDialog.getExistingDirectory(self, "Select Save Directory", self.dir_input.text())
         if folder:
-            self.dir_input.setText(folder)
+            self.dir_input.setText(os.path.abspath(folder))
 
     def add_links(self):
         text = self.text_links.toPlainText().strip()
@@ -159,7 +159,7 @@ class MainWindow(QMainWindow):
             return
             
         links = [line.strip() for line in text.split('\n') if line.strip() and line.startswith('http')]
-        save_dir = self.dir_input.text()
+        save_dir = os.path.abspath(self.dir_input.text())
         
         for link in links:
             task = DownloadTask(link, save_dir)
