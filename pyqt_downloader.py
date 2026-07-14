@@ -7,8 +7,8 @@ import subprocess
 import json
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QLabel, QLineEdit, QPushButton, QTextEdit, QTableWidget,
-    QTableWidgetItem, QHeaderView, QFileDialog, QAbstractItemView,
+    QLabel, QLineEdit, QPushButton, QTextEdit, QTreeWidget,
+    QTreeWidgetItem, QHeaderView, QFileDialog, QAbstractItemView,
     QCheckBox, QDialog, QFormLayout, QSpinBox, QDialogButtonBox,
     QMessageBox, QInputDialog
 )
@@ -24,7 +24,9 @@ def load_settings():
     default_settings = {
         "default_save_dir": os.path.abspath("."),
         "max_workers": 3,
-        "extract_after_download": False
+        "extract_after_download": False,
+        "column_widths": {},
+        "skip_delete_confirmation": False
     }
     settings_path = get_settings_path()
     if os.path.exists(settings_path):
@@ -75,6 +77,11 @@ class SettingsDialog(QDialog):
         self.extract_checkbox.setChecked(self.current_settings.get("extract_after_download", False))
         layout.addRow("Extract after download by default:", self.extract_checkbox)
         
+        # Skip Delete Confirmation Option
+        self.skip_delete_checkbox = QCheckBox()
+        self.skip_delete_checkbox.setChecked(self.current_settings.get("skip_delete_confirmation", False))
+        layout.addRow("Skip delete confirmation:", self.skip_delete_checkbox)
+        
         # Buttons
         button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
         button_box.accepted.connect(self.accept)
@@ -90,7 +97,9 @@ class SettingsDialog(QDialog):
         return {
             "default_save_dir": self.dir_input.text(),
             "max_workers": self.workers_spinbox.value(),
-            "extract_after_download": self.extract_checkbox.isChecked()
+            "extract_after_download": self.extract_checkbox.isChecked(),
+            "skip_delete_confirmation": self.skip_delete_checkbox.isChecked(),
+            "column_widths": self.current_settings.get("column_widths", {})
         }
 
 class DownloadTask:
@@ -114,7 +123,7 @@ class DownloadTask:
         self.save_dir = os.path.normpath(os.path.join(self.base_save_dir, self.folder_name))
         self.filepath = os.path.normpath(os.path.join(self.save_dir, self.filename))
         
-        self.status = "Queued"  # Queued, Pending, Starting..., Downloading, Paused, Cancelled, Completed, Extracting..., Extracted, Error
+        self.status = "Queued"
         self.progress = 0.0
         self.speed = 0.0
         self.downloaded_bytes = 0
@@ -122,8 +131,58 @@ class DownloadTask:
         
         self.pause_flag = False
         self.cancel_flag = False
-        self.row_idx = None
+        self.tree_item = None
         self.is_selected = False
+
+    def to_dict(self):
+        return {
+            "link": self.link,
+            "base_save_dir": self.base_save_dir,
+            "folder_name": self.folder_name,
+            "status": self.status,
+            "downloaded_bytes": self.downloaded_bytes,
+            "total_bytes": self.total_bytes,
+            "progress": self.progress
+        }
+        
+    @classmethod
+    def from_dict(cls, data):
+        task = cls(data["link"], data["base_save_dir"], data["folder_name"])
+        # Ensure it doesn't auto-start if it was active when closed
+        if data["status"] in ("Downloading", "Pending", "Starting...", "Resolving Container..."):
+            task.status = "Paused"
+            task.pause_flag = True
+        else:
+            task.status = data["status"]
+            
+        task.downloaded_bytes = data.get("downloaded_bytes", 0)
+        task.total_bytes = data.get("total_bytes", 0)
+        task.progress = data.get("progress", 0.0)
+        return task
+
+def get_history_path():
+    return os.path.expanduser("~/.fitgirl_downloader_history.json")
+
+def load_history():
+    history_path = get_history_path()
+    tasks = []
+    if os.path.exists(history_path):
+        try:
+            with open(history_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                for item_data in data:
+                    tasks.append(DownloadTask.from_dict(item_data))
+        except Exception:
+            pass
+    return tasks
+
+def save_history(tasks):
+    history_path = get_history_path()
+    try:
+        with open(history_path, 'w', encoding='utf-8') as f:
+            json.dump([t.to_dict() for t in tasks], f, indent=4)
+    except Exception as e:
+        print(f"Failed to save history: {e}")
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -140,6 +199,7 @@ class MainWindow(QMainWindow):
         self.extracted_folders = set()
         
         self.setup_ui()
+        self.load_tasks_from_history()
         
         # Start Background Download Manager
         self.manager_thread = threading.Thread(target=self.download_manager, daemon=True)
@@ -149,6 +209,19 @@ class MainWindow(QMainWindow):
         self.timer = QTimer()
         self.timer.timeout.connect(self.update_ui)
         self.timer.start(500) # update every 500ms
+
+    def closeEvent(self, event):
+        # Save tasks history before closing
+        save_history(self.tasks)
+        
+        # Save column widths
+        col_widths = {}
+        for i in range(self.tree.columnCount()):
+            col_widths[str(i)] = self.tree.columnWidth(i)
+        self.settings["column_widths"] = col_widths
+        save_settings(self.settings)
+        
+        event.accept()
 
     def setup_ui(self):
         # Menu Bar Setup
@@ -206,9 +279,22 @@ class MainWindow(QMainWindow):
         dir_layout.addWidget(browse_btn)
         main_layout.addLayout(dir_layout)
         
-        # 2. Links Section
-        main_layout.addWidget(QLabel("Paste Links Here (one per line):"))
+        # 2. Links & Global Stats Section
+        stats_layout = QHBoxLayout()
+        stats_layout.addWidget(QLabel("Paste Links Here (one per line):"))
+        
+        paste_btn = QPushButton("Paste from Clipboard")
+        paste_btn.clicked.connect(self.paste_from_clipboard)
+        stats_layout.addWidget(paste_btn)
+        
+        stats_layout.addStretch()
+        self.global_speed_label = QLabel("Global Speed: 0.00 MB/s")
+        self.global_speed_label.setStyleSheet("font-weight: bold; color: #2ecc71;")
+        stats_layout.addWidget(self.global_speed_label)
+        main_layout.addLayout(stats_layout)
+        
         self.text_links = QTextEdit()
+        self.text_links.setAcceptRichText(False) # Prevents styling from being retained
         self.text_links.setMaximumHeight(80)
         main_layout.addWidget(self.text_links)
         
@@ -217,23 +303,54 @@ class MainWindow(QMainWindow):
         add_btn.clicked.connect(self.add_links)
         main_layout.addWidget(add_btn)
         
-        # 3. Table Section
-        self.table = QTableWidget()
-        self.table.setColumnCount(6)
-        self.table.setHorizontalHeaderLabels(["Sel", "Filename", "Status", "Progress", "Speed", "Size"])
+        # 3. Table/Tree Section
+        self.tree = QTreeWidget()
+        self.tree.setColumnCount(7)
+        self.tree.setHeaderLabels(["Filename / Folder", "Sel", "Status", "Progress", "Speed", "ETA", "Size"])
         
-        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
-        self.table.setColumnWidth(0, 30)
-        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
-        self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
-        self.table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
-        self.table.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeMode.ResizeToContents)
+        self.tree.header().setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
+        self.tree.header().setSectionResizeMode(1, QHeaderView.ResizeMode.Interactive)
+        self.tree.setColumnWidth(1, 40)
+        self.tree.header().setSectionResizeMode(2, QHeaderView.ResizeMode.Interactive)
+        self.tree.header().setSectionResizeMode(3, QHeaderView.ResizeMode.Interactive)
+        self.tree.header().setSectionResizeMode(4, QHeaderView.ResizeMode.Interactive)
+        self.tree.header().setSectionResizeMode(5, QHeaderView.ResizeMode.Interactive)
+        self.tree.header().setSectionResizeMode(6, QHeaderView.ResizeMode.Interactive)
         
-        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.table.cellClicked.connect(self.handle_cell_clicked)
-        main_layout.addWidget(self.table)
+        # Load saved column widths if available
+        saved_widths = self.settings.get("column_widths", {})
+        if saved_widths:
+            for i in range(self.tree.columnCount()):
+                width = saved_widths.get(str(i))
+                if width:
+                    self.tree.setColumnWidth(i, width)
+        else:
+            # Default widths
+            self.tree.setColumnWidth(0, 300)
+            self.tree.setColumnWidth(2, 100)
+            self.tree.setColumnWidth(3, 80)
+            self.tree.setColumnWidth(4, 80)
+            self.tree.setColumnWidth(5, 80)
+            self.tree.setColumnWidth(6, 120)
+        
+        # Move the 'Sel' (checkbox) column visually to the far left
+        self.tree.header().moveSection(1, 0)
+        
+        self.tree.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.tree.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.tree.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        
+        # Remove dotted focus box on clicked cells
+        self.tree.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        
+        self.tree.itemClicked.connect(self.handle_item_clicked)
+        # Apply a stylesheet to ensure checkboxes are centered in their new logical column
+        # Also remove any outline when an item is selected
+        self.tree.setStyleSheet("""
+            QTreeView::indicator { width: 16px; height: 16px; }
+            QTreeView::item:selected { outline: none; }
+        """)
+        main_layout.addWidget(self.tree)
         
         # 4. Action Section
         action_layout = QHBoxLayout()
@@ -257,6 +374,16 @@ class MainWindow(QMainWindow):
         self.cancel_btn.clicked.connect(self.cancel_selected)
         action_layout.addWidget(self.cancel_btn)
         
+        self.retry_btn = QPushButton("Retry Error")
+        self.retry_btn.setStyleSheet("background-color: #9b59b6; color: white; font-weight: bold; padding: 6px;")
+        self.retry_btn.clicked.connect(self.retry_selected)
+        action_layout.addWidget(self.retry_btn)
+        
+        self.delete_btn = QPushButton("🗑️ Delete")
+        self.delete_btn.setStyleSheet("background-color: #34495e; color: white; font-weight: bold; padding: 6px;")
+        self.delete_btn.clicked.connect(self.delete_selected)
+        action_layout.addWidget(self.delete_btn)
+        
         action_layout.addStretch()
         
         self.extract_checkbox = QCheckBox("Extract after download")
@@ -268,6 +395,61 @@ class MainWindow(QMainWindow):
         action_layout.addWidget(clear_btn)
         
         main_layout.addLayout(action_layout)
+
+    def keyPressEvent(self, event):
+        if event.key() in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace):
+            self.delete_selected()
+        else:
+            super().keyPressEvent(event)
+
+    def get_or_create_batch_item(self, folder_name):
+        # Search for existing top-level item with this folder name
+        for i in range(self.tree.topLevelItemCount()):
+            item = self.tree.topLevelItem(i)
+            if item.text(0) == folder_name:
+                return item
+                
+        # Create a new top-level item for this batch
+        batch_item = QTreeWidgetItem(self.tree)
+        batch_item.setFlags(Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
+        batch_item.setText(0, folder_name)
+        batch_item.setCheckState(1, Qt.CheckState.Unchecked)
+        batch_item.setExpanded(True)
+        return batch_item
+
+    def add_task_to_ui(self, task):
+        batch_item = self.get_or_create_batch_item(task.folder_name)
+        
+        child_item = QTreeWidgetItem(batch_item)
+        child_item.setFlags(Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
+        
+        child_item.setText(0, task.filename)
+        
+        # Determine initial check state
+        check_state = Qt.CheckState.Checked if task.is_selected else Qt.CheckState.Unchecked
+        child_item.setCheckState(1, check_state)
+        
+        child_item.setText(2, task.status)
+        child_item.setText(3, "0%")
+        child_item.setText(4, "-")
+        child_item.setText(5, "-")
+        child_item.setText(6, "-")
+        
+        task.tree_item = child_item
+        if task not in self.tasks:
+            self.tasks.append(task)
+
+    def load_tasks_from_history(self):
+        loaded_tasks = load_history()
+        for task in loaded_tasks:
+            self.add_task_to_ui(task)
+            
+            # Immediately mark previously extracted batches as handled so they aren't re-extracted
+            if task.status == "Extracted":
+                self.extracted_folders.add(task.folder_name)
+            # If the app was closed while extracting, reset it to Completed so it can retry properly if needed
+            elif task.status == "Extracting...":
+                task.status = "Completed"
 
     def import_links_from_file(self):
         file_path, _ = QFileDialog.getOpenFileName(self, "Import Links", "", "Text Files (*.txt);;All Files (*)")
@@ -342,6 +524,17 @@ class MainWindow(QMainWindow):
         if folder:
             self.dir_input.setText(os.path.abspath(folder))
 
+    def paste_from_clipboard(self):
+        clipboard = QApplication.clipboard()
+        text = clipboard.text()
+        if text:
+            # Append if there is text, else just set it
+            current_text = self.text_links.toPlainText()
+            if current_text.strip():
+                self.text_links.setText(current_text + "\n" + text)
+            else:
+                self.text_links.setText(text)
+
     def add_links(self):
         text = self.text_links.toPlainText().strip()
         if not text:
@@ -379,48 +572,66 @@ class MainWindow(QMainWindow):
         
         for link in links:
             task = DownloadTask(link, save_dir, folder_name)
-            row = self.table.rowCount()
-            self.table.insertRow(row)
-            task.row_idx = row
-            
-            chk_item = QTableWidgetItem()
-            chk_item.setFlags(Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled)
-            chk_item.setCheckState(Qt.CheckState.Unchecked)
-            
-            self.table.setItem(row, 0, chk_item)
-            self.table.setItem(row, 1, QTableWidgetItem(f"{task.folder_name} / {task.filename}"))
-            self.table.setItem(row, 2, QTableWidgetItem(task.status))
-            self.table.setItem(row, 3, QTableWidgetItem("0%"))
-            self.table.setItem(row, 4, QTableWidgetItem("-"))
-            self.table.setItem(row, 5, QTableWidgetItem("-"))
-            
-            self.tasks.append(task)
+            self.add_task_to_ui(task)
             
         self.text_links.clear()
 
     def toggle_select_all(self):
         self.is_all_selected = not self.is_all_selected
         state = Qt.CheckState.Checked if self.is_all_selected else Qt.CheckState.Unchecked
-        for row in range(self.table.rowCount()):
-            item = self.table.item(row, 0)
-            if item:
-                item.setCheckState(state)
+        
+        # Iterate over all top level items and their children
+        for i in range(self.tree.topLevelItemCount()):
+            batch_item = self.tree.topLevelItem(i)
+            batch_item.setCheckState(1, state)
+            for j in range(batch_item.childCount()):
+                child_item = batch_item.child(j)
+                child_item.setCheckState(1, state)
+                
+        for task in self.tasks:
+            task.is_selected = self.is_all_selected
 
-    def handle_cell_clicked(self, row, col):
-        if col == 0:
-            item = self.table.item(row, col)
-            task = next((t for t in self.tasks if t.row_idx == row), None)
-            if task:
-                task.is_selected = (item.checkState() == Qt.CheckState.Checked)
+    def handle_item_clicked(self, item, col):
+        if col == 1: # Column 1 is now the Checkbox column
+            state = item.checkState(1)
+            
+            # If it's a batch (top-level) item, apply to all children
+            if item.parent() is None:
+                for i in range(item.childCount()):
+                    child = item.child(i)
+                    child.setCheckState(1, state)
+                    # Update underlying tasks
+                    task = next((t for t in self.tasks if t.tree_item == child), None)
+                    if task:
+                        task.is_selected = (state == Qt.CheckState.Checked)
+            else:
+                # It's a child item, update its specific task
+                task = next((t for t in self.tasks if t.tree_item == item), None)
+                if task:
+                    task.is_selected = (state == Qt.CheckState.Checked)
 
     def get_selected_tasks(self):
-        selected = []
-        for task in self.tasks:
-            if task.row_idx is not None:
-                item = self.table.item(task.row_idx, 0)
-                if item and item.checkState() == Qt.CheckState.Checked:
-                    selected.append(task)
-        return selected
+        # First check explicitly checked boxes
+        checked = [t for t in self.tasks if t.tree_item and t.tree_item.checkState(1) == Qt.CheckState.Checked]
+        if checked:
+            return checked
+            
+        # If nothing is explicitly checked via checkboxes, fallback to highlighted/selected tree rows
+        selected_items = self.tree.selectedItems()
+        selected_tasks = []
+        for item in selected_items:
+            # If a batch parent is highlighted, get all its child tasks
+            if item.parent() is None:
+                for i in range(item.childCount()):
+                    child = item.child(i)
+                    task = next((t for t in self.tasks if t.tree_item == child), None)
+                    if task and task not in selected_tasks:
+                        selected_tasks.append(task)
+            else:
+                task = next((t for t in self.tasks if t.tree_item == item), None)
+                if task and task not in selected_tasks:
+                    selected_tasks.append(task)
+        return selected_tasks
 
     def start_downloads(self):
         for task in self.get_selected_tasks():
@@ -442,19 +653,108 @@ class MainWindow(QMainWindow):
                 task.pause_flag = False
                 task.status = "Cancelled"
 
+    def retry_selected(self):
+        for task in self.get_selected_tasks():
+            if "Error" in task.status:
+                task.status = "Pending"
+                task.cancel_flag = False
+                task.pause_flag = False
+
+    def delete_selected(self):
+        tasks_to_delete = self.get_selected_tasks()
+        if not tasks_to_delete:
+            return
+            
+        delete_files = False
+        
+        if not self.settings.get("skip_delete_confirmation", False):
+            dialog = QDialog(self)
+            dialog.setWindowTitle("Confirm Delete")
+            layout = QVBoxLayout(dialog)
+            
+            label = QLabel(f"Are you sure you want to delete {len(tasks_to_delete)} selected task(s)?")
+            layout.addWidget(label)
+            
+            file_checkbox = QCheckBox("Also delete downloaded files from disk")
+            layout.addWidget(file_checkbox)
+            
+            dont_ask_checkbox = QCheckBox("Don't ask again")
+            layout.addWidget(dont_ask_checkbox)
+            
+            button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Yes | QDialogButtonBox.StandardButton.No)
+            button_box.accepted.connect(dialog.accept)
+            button_box.rejected.connect(dialog.reject)
+            layout.addWidget(button_box)
+            
+            if dialog.exec() == QDialog.DialogCode.Accepted:
+                delete_files = file_checkbox.isChecked()
+                if dont_ask_checkbox.isChecked():
+                    self.settings["skip_delete_confirmation"] = True
+                    self.skip_delete_checkbox.setChecked(True) if hasattr(self, 'skip_delete_checkbox') else None
+                    save_settings(self.settings)
+            else:
+                return # Cancelled
+                
+        # Proceed with deletion
+        for task in tasks_to_delete:
+            # 1. Cancel the task if it's active
+            task.cancel_flag = True
+            task.status = "Cancelled"
+            
+            # 2. Delete the physical file if requested
+            if delete_files and os.path.exists(task.filepath):
+                try:
+                    os.remove(task.filepath)
+                except Exception as e:
+                    print(f"Failed to delete {task.filepath}: {e}")
+                    
+            # 3. Remove from UI tree
+            if task.tree_item:
+                parent = task.tree_item.parent()
+                if parent:
+                    parent.removeChild(task.tree_item)
+                    if parent.childCount() == 0:
+                        idx = self.tree.indexOfTopLevelItem(parent)
+                        if idx >= 0:
+                            self.tree.takeTopLevelItem(idx)
+                            
+            # 4. Remove from tasks list
+            if task in self.tasks:
+                self.tasks.remove(task)
+                
     def clear_finished(self):
         to_remove = [t for t in self.tasks if t.status in ("Completed", "Extracted", "Cancelled")]
-        to_remove.sort(key=lambda t: t.row_idx, reverse=True)
+        
         for t in to_remove:
-            self.table.removeRow(t.row_idx)
+            if t.tree_item:
+                parent = t.tree_item.parent()
+                if parent:
+                    parent.removeChild(t.tree_item)
+                    # If parent batch is now empty, remove it too
+                    if parent.childCount() == 0:
+                        idx = self.tree.indexOfTopLevelItem(parent)
+                        if idx >= 0:
+                            self.tree.takeTopLevelItem(idx)
             self.tasks.remove(t)
-            
-        for idx, t in enumerate(self.tasks):
-            t.row_idx = idx
+
+    def format_eta(self, seconds):
+        if seconds <= 0 or seconds == float('inf'):
+            return "-"
+        m, s = divmod(int(seconds), 60)
+        h, m = divmod(m, 60)
+        if h > 0:
+            return f"{h}h {m}m"
+        elif m > 0:
+            return f"{m}m {s}s"
+        else:
+            return f"{s}s"
 
     def update_ui(self):
+        global_speed = 0.0
+        
+        # Update individual tasks
         for task in self.tasks:
-            if task.row_idx is None:
+            if not task.tree_item:
                 continue
             prog_str = f"{task.progress:.1f}%" if task.status not in ("Extracted", "Extracting...", "Extract Error") else "-"
             speed_str = f"{task.speed:.2f} MB/s" if task.status == "Downloading" else "-"
@@ -462,10 +762,86 @@ class MainWindow(QMainWindow):
             dl_mb = task.downloaded_bytes / (1024*1024)
             size_str = f"{dl_mb:.1f} / {size_mb:.1f} MB" if task.total_bytes > 0 else "-"
             
-            self.table.item(task.row_idx, 2).setText(task.status)
-            self.table.item(task.row_idx, 3).setText(prog_str)
-            self.table.item(task.row_idx, 4).setText(speed_str)
-            self.table.item(task.row_idx, 5).setText(size_str)
+            eta_str = "-"
+            if task.status == "Downloading" and task.speed > 0 and task.total_bytes > 0:
+                remaining_bytes = task.total_bytes - task.downloaded_bytes
+                eta_seconds = remaining_bytes / (task.speed * 1024 * 1024)
+                eta_str = self.format_eta(eta_seconds)
+            elif task.status in ("Completed", "Extracted", "Extracting..."):
+                eta_str = "-"
+            
+            task.tree_item.setText(2, task.status)
+            task.tree_item.setText(3, prog_str)
+            task.tree_item.setText(4, speed_str)
+            task.tree_item.setText(5, eta_str)
+            task.tree_item.setText(6, size_str)
+            
+            if task.status == "Downloading":
+                global_speed += task.speed
+                
+        self.global_speed_label.setText(f"Global Speed: {global_speed:.2f} MB/s")
+            
+        # Update top-level batch folders
+        for i in range(self.tree.topLevelItemCount()):
+            batch_item = self.tree.topLevelItem(i)
+            total_dl = 0
+            total_size = 0
+            total_speed = 0.0
+            
+            all_completed = True
+            any_error = False
+            any_downloading = False
+            
+            child_count = batch_item.childCount()
+            if child_count == 0:
+                continue
+                
+            for j in range(child_count):
+                child = batch_item.child(j)
+                task = next((t for t in self.tasks if t.tree_item == child), None)
+                if task:
+                    total_dl += task.downloaded_bytes
+                    total_size += task.total_bytes
+                    total_speed += getattr(task, 'speed', 0.0)
+                    
+                    if task.status not in ("Completed", "Extracted"):
+                        all_completed = False
+                    if "Error" in task.status:
+                        any_error = True
+                    if task.status in ("Downloading", "Starting...", "Pending"):
+                        any_downloading = True
+                        
+            # Determine batch status
+            batch_status = "Queued"
+            if all_completed:
+                # If all are completed but we are extracting, say Extracting...
+                if any(t.status == "Extracting..." for t in [next((t for t in self.tasks if t.tree_item == batch_item.child(k)), None) for k in range(batch_item.childCount()) if next((t for t in self.tasks if t.tree_item == batch_item.child(k)), None)]):
+                    batch_status = "Extracting..."
+                else:
+                    batch_status = "Completed"
+            elif any_error:
+                batch_status = "Contains Errors"
+            elif any_downloading:
+                batch_status = "Active"
+                
+            prog = (total_dl / total_size * 100) if total_size > 0 else 0
+            prog_str = f"{prog:.1f}%"
+            speed_str = f"{total_speed:.2f} MB/s" if total_speed > 0 else "-"
+            size_mb = total_size / (1024*1024)
+            dl_mb = total_dl / (1024*1024)
+            size_str = f"{dl_mb:.1f} / {size_mb:.1f} MB" if total_size > 0 else "-"
+            
+            eta_str = "-"
+            if any_downloading and total_speed > 0 and total_size > 0:
+                remaining_bytes = total_size - total_dl
+                eta_seconds = remaining_bytes / (total_speed * 1024 * 1024)
+                eta_str = self.format_eta(eta_seconds)
+            
+            batch_item.setText(2, batch_status)
+            batch_item.setText(3, prog_str)
+            batch_item.setText(4, speed_str)
+            batch_item.setText(5, eta_str)
+            batch_item.setText(6, size_str)
 
     def download_manager(self):
         while True:
@@ -498,12 +874,25 @@ class MainWindow(QMainWindow):
                 continue
                 
             # If all tasks in this group are downloaded/completed
-            if all(t.status in ("Completed", "Extracted") for t in tasks_in_folder):
+            # Exclude batches that contain errors, cancelled, paused, queued, etc.
+            # We ONLY want to trigger extraction if everything is completed or extracted.
+            valid_extraction_statuses = {"Completed", "Extracted", "Extracting..."}
+            if tasks_in_folder and all(t.status in valid_extraction_statuses for t in tasks_in_folder):
+                # If everything is already Extracted, skip
+                if all(t.status == "Extracted" for t in tasks_in_folder):
+                    self.extracted_folders.add(folder_name)
+                    continue
+                    
+                # If ANY task in this folder is currently Extracting..., don't spawn another thread
+                if any(t.status == "Extracting..." for t in tasks_in_folder):
+                    continue
+                    
                 self.extracted_folders.add(folder_name)
                 threading.Thread(target=self.extract_folder, args=(tasks_in_folder,), daemon=True).start()
 
     def extract_folder(self, tasks_in_folder):
         save_dir = tasks_in_folder[0].save_dir
+        folder_name = tasks_in_folder[0].folder_name
         
         for t in tasks_in_folder:
             t.status = "Extracting..."
@@ -527,6 +916,8 @@ class MainWindow(QMainWindow):
             if not first_vol:
                 for t in tasks_in_folder:
                     t.status = "Extract Error (No File)"
+                if folder_name in self.extracted_folders:
+                    self.extracted_folders.remove(folder_name)
                 return
                 
             # Define paths to extractors
@@ -551,6 +942,8 @@ class MainWindow(QMainWindow):
             if not cmd:
                 for t in tasks_in_folder:
                     t.status = "Extract Error (Missing 7z.exe)"
+                if folder_name in self.extracted_folders:
+                    self.extracted_folders.remove(folder_name)
                 return
                 
             # Run extraction silently without spawning a console window
@@ -570,9 +963,13 @@ class MainWindow(QMainWindow):
         except subprocess.CalledProcessError:
             for t in tasks_in_folder:
                 t.status = "Extract Error (Corrupt?)"
+            if folder_name in self.extracted_folders:
+                self.extracted_folders.remove(folder_name)
         except Exception as e:
             for t in tasks_in_folder:
                 t.status = f"Extract Error"
+            if folder_name in self.extracted_folders:
+                self.extracted_folders.remove(folder_name)
 
     def get_direct_link(self, task):
         try:
