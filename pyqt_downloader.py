@@ -12,13 +12,13 @@ from PyQt6.QtWidgets import (
     QCheckBox, QDialog, QFormLayout, QSpinBox, QDialogButtonBox,
     QMessageBox, QInputDialog
 )
-from PyQt6.QtGui import QAction, QDesktopServices
+from PyQt6.QtGui import QAction, QDesktopServices, QIcon
 from PyQt6.QtCore import Qt, QTimer, QUrl
 
 import cloudscraper
 
 def get_settings_path():
-    return os.path.expanduser("~/.fitgirl_downloader_settings.json")
+    return os.path.expanduser("~/.silverspoon_settings.json")
 
 def load_settings():
     default_settings = {
@@ -161,7 +161,7 @@ class DownloadTask:
         return task
 
 def get_history_path():
-    return os.path.expanduser("~/.fitgirl_downloader_history.json")
+    return os.path.expanduser("~/.silverspoon_history.json")
 
 def load_history():
     history_path = get_history_path()
@@ -187,8 +187,18 @@ def save_history(tasks):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("FuckingFast Downloader - UI (PyQt6)")
+        self.setWindowTitle("SilverSpoon - UI (PyQt6)")
         self.resize(1000, 650)
+        
+        # Determine paths to assets (works both locally and within a PyInstaller bundled .exe)
+        if hasattr(sys, '_MEIPASS'):
+            self.base_dir = sys._MEIPASS
+        else:
+            self.base_dir = os.path.dirname(os.path.abspath(__file__))
+            
+        icon_path = os.path.join(self.base_dir, 'SilverSpoon.ico')
+        if os.path.exists(icon_path):
+            self.setWindowIcon(QIcon(icon_path))
         
         self.settings = load_settings()
         
@@ -467,14 +477,14 @@ class MainWindow(QMainWindow):
                 QMessageBox.critical(self, "Error", f"Failed to read file:\n{e}")
 
     def open_github_link(self):
-        QDesktopServices.openUrl(QUrl("https://github.com/billysams21/FitGirlDownloader"))
+        QDesktopServices.openUrl(QUrl("https://github.com/billysams21/SilverSpoon"))
         
     def open_contact_link(self):
-        QDesktopServices.openUrl(QUrl("https://github.com/billysams21/FitGirlDownloader/issues"))
+        QDesktopServices.openUrl(QUrl("https://github.com/billysams21/SilverSpoon/issues"))
 
     def show_contributing_dialog(self):
         QMessageBox.information(self, "Contributing Guide",
-            "<h3>Contributing to FitGirlDownloader</h3>"
+            "<h3>Contributing to SilverSpoon</h3>"
             "<p>We welcome contributions! Please see the <b>CONTRIBUTING.md</b> file in the repository for full details.</p>"
             "<p><b>Quick Rules:</b></p>"
             "<ul>"
@@ -485,9 +495,9 @@ class MainWindow(QMainWindow):
         )
 
     def show_about_dialog(self):
-        QMessageBox.about(self, "About FuckingFast Downloader",
-            "<h3>FuckingFast Downloader v1.2.0</h3>"
-            "<p>A simple, fast downloader for FuckingFast links.</p>"
+        QMessageBox.about(self, "About SilverSpoon",
+            "<h3>SilverSpoon v1.2.0</h3>"
+            "<p>A simple, fast bulk downloader for FuckingFast links.</p>"
             "<p>Select your links, paste them in, and hit Add!</p>"
             "<hr>"
             "<h4>Changelog (v1.2.0 - Short):</h4>"

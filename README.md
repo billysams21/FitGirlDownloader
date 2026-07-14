@@ -1,8 +1,8 @@
-# FitGirlDownloader
+# SilverSpoon
 
-> **Note:** Currently, this tool ONLY supports `fuckingfast.co` links. Support for other hosts may be added in the future.
+> **Note:** Currently, this tool ONLY supports `fuckingfast.co` links (often used by FitGirl Repacks). Support for other hosts may be added in the future.
 
-A Python-based bulk downloader designed to bypass Cloudflare protections on file-hosting sites like *fuckingfast.co* (often used by FitGirl Repacks). It automates the process of extracting direct download links and supports concurrent downloading with pause and resume capabilities.
+A Python-based bulk downloader designed to bypass Cloudflare protections on file-hosting sites like *fuckingfast.co*. It automates the process of extracting direct download links and supports concurrent downloading with pause and resume capabilities.
 
 ## Features
 
@@ -30,8 +30,8 @@ A Python-based bulk downloader designed to bypass Cloudflare protections on file
 
 1. Clone this repository:
    ```bash
-   git clone https://github.com/billysams21/FitGirlDownloader.git
-   cd FitGirlDownloader
+   git clone https://github.com/billysams21/SilverSpoon.git
+   cd SilverSpoon
    ```
 2. Install the required Python packages (or do it inside virtual environment):
    ```bash
@@ -41,7 +41,7 @@ A Python-based bulk downloader designed to bypass Cloudflare protections on file
 ## Usage
 
 ### Using the GUI (Recommended)
-Launch the graphical interface (or double-click `FitGirlDownloader.exe`):
+Launch the graphical interface (or double-click `SilverSpoon.exe`):
 ```bash
 python pyqt_downloader.py
 ```
@@ -73,7 +73,7 @@ If you prefer the command line:
 
 ## Contributing
 
-We welcome contributions! If you'd like to help improve FitGirlDownloader, please see our [Contributing Guide](CONTRIBUTING.md) for instructions on how to set up your environment, follow our branching strategy (`dev` branch), and submit Pull Requests.
+We welcome contributions! If you'd like to help improve SilverSpoon, please see our [Contributing Guide](CONTRIBUTING.md) for instructions on how to set up your environment, follow our branching strategy (`dev` branch), and submit Pull Requests.
 
 ## Changelog
 

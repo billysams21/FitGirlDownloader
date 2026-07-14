@@ -1,6 +1,6 @@
-# Contributing to FitGirlDownloader
+# Contributing to SilverSpoon
 
-First off, thank you for considering contributing to FitGirlDownloader! It's people like you that make such tools better.
+First off, thank you for considering contributing to SilverSpoon! It's people like you that make such tools better.
 
 ## How to Contribute
 
@@ -28,4 +28,4 @@ If you're not ready to write code but found a bug or have a great idea:
 * Please check the existing Issues to see if it has already been reported.
 * Open a new Issue providing as much detail as possible (steps to reproduce, expected behavior, OS version, etc.).
 
-Thank you for your help in improving FitGirlDownloader!
+Thank you for your help in improving SilverSpoon!

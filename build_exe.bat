@@ -1,9 +1,9 @@
 @echo off
-echo Building FitGirlDownloader executable...
+echo Building SilverSpoon executable...
 echo This might take a minute or two.
 echo.
 
-C:\Python313\Scripts\pyinstaller.exe --noconsole --onefile --add-binary "7z.exe;." --add-binary "7z.dll;." --name "FitGirlDownloader" pyqt_downloader.py
+C:\Python313\Scripts\pyinstaller.exe --noconsole --onefile --icon="SilverSpoon.ico" --add-binary "7z.exe;." --add-binary "7z.dll;." --add-data "SilverSpoon.ico;." --name "SilverSpoon" pyqt_downloader.py
 
 echo.
 echo Build complete! You can find the executable in the 'dist' folder.
