@@ -475,36 +475,30 @@ class MainWindow(QMainWindow):
     def show_contributing_dialog(self):
         QMessageBox.information(self, "Contributing Guide",
             "<h3>Contributing to FitGirlDownloader</h3>"
-            "<p>We welcome contributions! Here is how you can help:</p>"
+            "<p>We welcome contributions! Please see the <b>CONTRIBUTING.md</b> file in the repository for full details.</p>"
+            "<p><b>Quick Rules:</b></p>"
             "<ul>"
-            "<li><b>Bug Reports:</b> Use the 'Contact Us' button to open an issue on GitHub. Please include steps to reproduce the error.</li>"
-            "<li><b>Feature Requests:</b> Have an idea? Open an issue on GitHub and tag it as an enhancement!</li>"
-            "<li><b>Pull Requests:</b>"
-            "  <ol>"
-            "    <li>Fork the repository.</li>"
-            "    <li>Create a new branch for your feature or bug fix.</li>"
-            "    <li>Test your changes locally.</li>"
-            "    <li>Submit a Pull Request with a clear description of your changes.</li>"
-            "  </ol>"
-            "</li>"
+            "<li>Always work on the <code>dev</code> branch.</li>"
+            "<li>Carefully test your changes before submitting a PR.</li>"
+            "<li>Report bugs via the GitHub Issues tab.</li>"
             "</ul>"
-            "<p><i>Note: Please ensure your code follows the existing style and does not break current functionality.</i></p>"
         )
 
     def show_about_dialog(self):
         QMessageBox.about(self, "About FuckingFast Downloader",
-            "<h3>FuckingFast Downloader v1.1</h3>"
+            "<h3>FuckingFast Downloader v1.2.0</h3>"
             "<p>A simple, fast downloader for FuckingFast links.</p>"
             "<p>Select your links, paste them in, and hit Add!</p>"
             "<hr>"
-            "<h4>Changelog (v1.1):</h4>"
+            "<h4>Changelog (v1.2.0 - Short):</h4>"
             "<ul>"
-            "<li><b>New:</b> Settings page with persistent configurations (Save Directory, Max Concurrent Downloads, Auto-extract).</li>"
-            "<li><b>New:</b> Import links directly from .txt files via the File menu.</li>"
-            "<li><b>New:</b> Batch Folder Prompt! Automatically groups main game parts and optional files into the exact same folder when adding links.</li>"
-            "<li><b>Changed:</b> Consolidated 'Start' and 'Resume' into a single, smarter action button.</li>"
-            "<li><b>Changed:</b> Improved top menu bar layout.</li>"
+            "<li><b>New:</b> Persistent download history and custom column sizing.</li>"
+            "<li><b>New:</b> Batch folders with collapsible tree UI.</li>"
+            "<li><b>New:</b> Live global speed tracking and ETAs.</li>"
+            "<li><b>New:</b> Delete button/key to trash files and tasks.</li>"
+            "<li><b>New:</b> 'Retry Error' and 'Paste from Clipboard' buttons.</li>"
             "</ul>"
+            "<p><i>See CHANGELOG.md for full details.</i></p>"
         )
 
     def open_settings_dialog(self):
