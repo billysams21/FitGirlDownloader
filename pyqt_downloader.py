@@ -1181,10 +1181,11 @@ class MainWindow(QMainWindow):
                 elif os.path.exists(bundled_7z):
                     cmd = [bundled_7z, 'x', first_vol, f'-o{save_dir}', '-y']
             else:
-                # Linux / macOS: use system 7z from p7zip
-                linux_7z = '/usr/bin/7z'
-                if os.path.exists(linux_7z):
-                    cmd = [linux_7z, 'x', first_vol, f'-o{save_dir}', '-y']
+                import shutil
+                if shutil.which('7z'):
+                    cmd = ['7z', 'x', first_vol, f'-o{save_dir}', '-y']
+                elif shutil.which('unrar'):
+                    cmd = ['unrar', 'x', first_vol, f'{save_dir}/', '-y']
                 
             if not cmd:
                 for t in tasks_in_folder:
