@@ -10,15 +10,15 @@ from PyQt6.QtWidgets import (
     QLabel, QLineEdit, QPushButton, QTextEdit, QTreeWidget,
     QTreeWidgetItem, QHeaderView, QFileDialog, QAbstractItemView,
     QCheckBox, QDialog, QFormLayout, QSpinBox, QDialogButtonBox,
-    QMessageBox, QInputDialog
+    QMessageBox, QInputDialog, QSplashScreen
 )
-from PyQt6.QtGui import QAction, QDesktopServices
+from PyQt6.QtGui import QAction, QDesktopServices, QIcon, QPixmap
 from PyQt6.QtCore import Qt, QTimer, QUrl
 
 import cloudscraper
 
 def get_settings_path():
-    return os.path.expanduser("~/.fitgirl_downloader_settings.json")
+    return os.path.expanduser("~/.silverspoon_settings.json")
 
 def load_settings():
     default_settings = {
@@ -161,7 +161,7 @@ class DownloadTask:
         return task
 
 def get_history_path():
-    return os.path.expanduser("~/.fitgirl_downloader_history.json")
+    return os.path.expanduser("~/.silverspoon_history.json")
 
 def load_history():
     history_path = get_history_path()
@@ -187,8 +187,18 @@ def save_history(tasks):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("FuckingFast Downloader - UI (PyQt6)")
+        self.setWindowTitle("SilverSpoon - UI (PyQt6)")
         self.resize(1000, 650)
+        
+        # Determine paths to assets (works both locally and within a PyInstaller bundled .exe)
+        if hasattr(sys, '_MEIPASS'):
+            self.base_dir = sys._MEIPASS
+        else:
+            self.base_dir = os.path.dirname(os.path.abspath(__file__))
+            
+        icon_path = os.path.join(self.base_dir, 'SilverSpoon.ico')
+        if os.path.exists(icon_path):
+            self.setWindowIcon(QIcon(icon_path))
         
         self.settings = load_settings()
         
@@ -344,6 +354,7 @@ class MainWindow(QMainWindow):
         self.tree.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         
         self.tree.itemClicked.connect(self.handle_item_clicked)
+        self.tree.itemSelectionChanged.connect(self.handle_item_selection_changed)
         # Apply a stylesheet to ensure checkboxes are centered in their new logical column
         # Also remove any outline when an item is selected
         self.tree.setStyleSheet("""
@@ -417,6 +428,21 @@ class MainWindow(QMainWindow):
         batch_item.setExpanded(True)
         return batch_item
 
+    def trigger_history_save(self):
+        """Saves history in a non-blocking way to avoid UI stutter."""
+        # Only save history if we aren't already saving it (basic debounce)
+        if not hasattr(self, '_history_save_timer'):
+            self._history_save_timer = QTimer()
+            self._history_save_timer.setSingleShot(True)
+            self._history_save_timer.timeout.connect(lambda: save_history(self.tasks))
+        
+        # Debounce to 500ms using PyQt6's safe signal-slot mechanism for threading
+        # Ensure thread safety by wrapping in QMetaObject.invokeMethod if not in main thread
+        import inspect
+        from PyQt6.QtCore import QMetaObject, Q_ARG
+        
+        QMetaObject.invokeMethod(self._history_save_timer, "start", Qt.ConnectionType.QueuedConnection, Q_ARG(int, 500))
+
     def add_task_to_ui(self, task):
         batch_item = self.get_or_create_batch_item(task.folder_name)
         
@@ -438,6 +464,7 @@ class MainWindow(QMainWindow):
         task.tree_item = child_item
         if task not in self.tasks:
             self.tasks.append(task)
+            self.trigger_history_save()
 
     def load_tasks_from_history(self):
         loaded_tasks = load_history()
@@ -467,44 +494,38 @@ class MainWindow(QMainWindow):
                 QMessageBox.critical(self, "Error", f"Failed to read file:\n{e}")
 
     def open_github_link(self):
-        QDesktopServices.openUrl(QUrl("https://github.com/billysams21/FitGirlDownloader"))
+        QDesktopServices.openUrl(QUrl("https://github.com/billysams21/SilverSpoon"))
         
     def open_contact_link(self):
-        QDesktopServices.openUrl(QUrl("https://github.com/billysams21/FitGirlDownloader/issues"))
+        QDesktopServices.openUrl(QUrl("https://github.com/billysams21/SilverSpoon/issues"))
 
     def show_contributing_dialog(self):
         QMessageBox.information(self, "Contributing Guide",
-            "<h3>Contributing to FitGirlDownloader</h3>"
-            "<p>We welcome contributions! Here is how you can help:</p>"
+            "<h3>Contributing to SilverSpoon</h3>"
+            "<p>We welcome contributions! Please see the <b>CONTRIBUTING.md</b> file in the repository for full details.</p>"
+            "<p><b>Quick Rules:</b></p>"
             "<ul>"
-            "<li><b>Bug Reports:</b> Use the 'Contact Us' button to open an issue on GitHub. Please include steps to reproduce the error.</li>"
-            "<li><b>Feature Requests:</b> Have an idea? Open an issue on GitHub and tag it as an enhancement!</li>"
-            "<li><b>Pull Requests:</b>"
-            "  <ol>"
-            "    <li>Fork the repository.</li>"
-            "    <li>Create a new branch for your feature or bug fix.</li>"
-            "    <li>Test your changes locally.</li>"
-            "    <li>Submit a Pull Request with a clear description of your changes.</li>"
-            "  </ol>"
-            "</li>"
+            "<li>Always work on the <code>dev</code> branch.</li>"
+            "<li>Carefully test your changes before submitting a PR.</li>"
+            "<li>Report bugs via the GitHub Issues tab.</li>"
             "</ul>"
-            "<p><i>Note: Please ensure your code follows the existing style and does not break current functionality.</i></p>"
         )
 
     def show_about_dialog(self):
-        QMessageBox.about(self, "About FuckingFast Downloader",
-            "<h3>FuckingFast Downloader v1.1</h3>"
-            "<p>A simple, fast downloader for FuckingFast links.</p>"
+        QMessageBox.about(self, "About SilverSpoon",
+            "<h3>SilverSpoon v1.2.0</h3>"
+            "<p>A simple, fast bulk downloader for FuckingFast links.</p>"
             "<p>Select your links, paste them in, and hit Add!</p>"
             "<hr>"
-            "<h4>Changelog (v1.1):</h4>"
+            "<h4>Changelog (v1.2.0 - Short):</h4>"
             "<ul>"
-            "<li><b>New:</b> Settings page with persistent configurations (Save Directory, Max Concurrent Downloads, Auto-extract).</li>"
-            "<li><b>New:</b> Import links directly from .txt files via the File menu.</li>"
-            "<li><b>New:</b> Batch Folder Prompt! Automatically groups main game parts and optional files into the exact same folder when adding links.</li>"
-            "<li><b>Changed:</b> Consolidated 'Start' and 'Resume' into a single, smarter action button.</li>"
-            "<li><b>Changed:</b> Improved top menu bar layout.</li>"
+            "<li><b>New:</b> Persistent download history and custom column sizing.</li>"
+            "<li><b>New:</b> Batch folders with collapsible tree UI.</li>"
+            "<li><b>New:</b> Live global speed tracking and ETAs.</li>"
+            "<li><b>New:</b> Delete button/key to trash files and tasks.</li>"
+            "<li><b>New:</b> 'Retry Error' and 'Paste from Clipboard' buttons.</li>"
             "</ul>"
+            "<p><i>See CHANGELOG.md for full details.</i></p>"
         )
 
     def open_settings_dialog(self):
@@ -577,7 +598,24 @@ class MainWindow(QMainWindow):
         self.text_links.clear()
 
     def toggle_select_all(self):
-        self.is_all_selected = not self.is_all_selected
+        # Check if all items are currently checked
+        all_checked = True
+        total_items = 0
+        
+        for i in range(self.tree.topLevelItemCount()):
+            batch_item = self.tree.topLevelItem(i)
+            if batch_item.checkState(1) != Qt.CheckState.Checked:
+                all_checked = False
+            for j in range(batch_item.childCount()):
+                total_items += 1
+                if batch_item.child(j).checkState(1) != Qt.CheckState.Checked:
+                    all_checked = False
+                    
+        if total_items == 0:
+            return
+            
+        # If everything is already checked, toggle to uncheck all. Otherwise check all.
+        self.is_all_selected = not all_checked
         state = Qt.CheckState.Checked if self.is_all_selected else Qt.CheckState.Unchecked
         
         # Iterate over all top level items and their children
@@ -609,6 +647,32 @@ class MainWindow(QMainWindow):
                 task = next((t for t in self.tasks if t.tree_item == item), None)
                 if task:
                     task.is_selected = (state == Qt.CheckState.Checked)
+                    
+    def handle_item_selection_changed(self):
+        # Synchronize checkbox state with the row's selection state
+        for i in range(self.tree.topLevelItemCount()):
+            top_item = self.tree.topLevelItem(i)
+            # Sync top-level item
+            if top_item.isSelected():
+                top_item.setCheckState(1, Qt.CheckState.Checked)
+            else:
+                top_item.setCheckState(1, Qt.CheckState.Unchecked)
+                
+            # Sync child items
+            for j in range(top_item.childCount()):
+                child = top_item.child(j)
+                
+                # If parent is selected, force children to be checked too
+                if top_item.isSelected() or child.isSelected():
+                    child.setCheckState(1, Qt.CheckState.Checked)
+                    task = next((t for t in self.tasks if t.tree_item == child), None)
+                    if task:
+                        task.is_selected = True
+                else:
+                    child.setCheckState(1, Qt.CheckState.Unchecked)
+                    task = next((t for t in self.tasks if t.tree_item == child), None)
+                    if task:
+                        task.is_selected = False
 
     def get_selected_tasks(self):
         # First check explicitly checked boxes
@@ -722,9 +786,14 @@ class MainWindow(QMainWindow):
             if task in self.tasks:
                 self.tasks.remove(task)
                 
+        self.trigger_history_save()
+                
     def clear_finished(self):
         to_remove = [t for t in self.tasks if t.status in ("Completed", "Extracted", "Cancelled")]
         
+        if not to_remove:
+            return
+            
         for t in to_remove:
             if t.tree_item:
                 parent = t.tree_item.parent()
@@ -736,6 +805,8 @@ class MainWindow(QMainWindow):
                         if idx >= 0:
                             self.tree.takeTopLevelItem(idx)
             self.tasks.remove(t)
+            
+        self.trigger_history_save()
 
     def format_eta(self, seconds):
         if seconds <= 0 or seconds == float('inf'):
@@ -962,17 +1033,20 @@ class MainWindow(QMainWindow):
             
             for t in tasks_in_folder:
                 t.status = "Extracted"
+            self.trigger_history_save()
                 
         except subprocess.CalledProcessError:
             for t in tasks_in_folder:
                 t.status = "Extract Error (Corrupt?)"
             if folder_name in self.extracted_folders:
                 self.extracted_folders.remove(folder_name)
+            self.trigger_history_save()
         except Exception as e:
             for t in tasks_in_folder:
                 t.status = f"Extract Error"
             if folder_name in self.extracted_folders:
                 self.extracted_folders.remove(folder_name)
+            self.trigger_history_save()
 
     def get_direct_link(self, task):
         try:
@@ -1082,13 +1156,41 @@ class MainWindow(QMainWindow):
                 task.progress = 100
                 task.speed = 0
                 task.status = "Completed"
+                self.trigger_history_save()
                 
         except Exception as e:
             if not task.cancel_flag and not task.pause_flag:
                 task.status = "Error"
+                self.trigger_history_save()
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
+    
+    # Determine base directory for assets
+    if hasattr(sys, '_MEIPASS'):
+        base_dir = sys._MEIPASS
+    else:
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        
+    # Show splash screen
+    splash_pixmap = QPixmap(os.path.join(base_dir, "SilverSpoon.png"))
+    
+    # If the image is extremely large, scale it down for the splash screen
+    if not splash_pixmap.isNull():
+        if splash_pixmap.width() > 600 or splash_pixmap.height() > 400:
+            splash_pixmap = splash_pixmap.scaled(600, 400, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+            
+    splash = QSplashScreen(splash_pixmap, Qt.WindowType.WindowStaysOnTopHint)
+    splash.show()
+    
+    # Allow Qt events to process so the splash screen renders immediately
+    app.processEvents()
+    
+    # Setup window and load things while splash is visible
     window = MainWindow()
-    window.show()
+    
+    # After 1 second (1000 ms), close splash and show main window
+    QTimer.singleShot(1000, splash.close)
+    QTimer.singleShot(1000, window.show)
+    
     sys.exit(app.exec())
