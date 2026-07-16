@@ -29,12 +29,23 @@ def get_settings_path():
     return os.path.expanduser("~/.silverspoon_settings.json")
 
 def load_settings():
+    if sys.platform == "win32":
+        default_downloads = os.path.join(os.path.expanduser("~"), "Downloads")
+        if not os.path.exists(default_downloads):
+            try:
+                os.makedirs(default_downloads, exist_ok=True)
+            except Exception:
+                default_downloads = os.path.abspath(".")
+    else:
+        default_downloads = os.path.abspath(".")
+        
     default_settings = {
-        "default_save_dir": os.path.abspath("."),
+        "default_save_dir": default_downloads,
         "max_workers": 3,
         "extract_after_download": False,
         "column_widths": {},
-        "skip_delete_confirmation": False
+        "skip_delete_confirmation": False,
+        "show_warning_dialog": True
     }
     settings_path = get_settings_path()
     if os.path.exists(settings_path):
@@ -75,6 +86,62 @@ def format_error_message(error, max_length=160):
         text = text[:max_length].rstrip() + "..."
     return f"{error_type}: {text}"
 
+class WarningDialog(QDialog):
+    def __init__(self, settings, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Welcome to SilverSpoon!")
+        self.setMinimumWidth(500)
+        self.settings = settings
+        
+        layout = QVBoxLayout(self)
+        
+        # Shortcuts Section
+        shortcuts_label = QLabel("<b>Keyboard Shortcuts:</b>")
+        layout.addWidget(shortcuts_label)
+        
+        shortcuts_text = (
+            "<ul>"
+            "<li><b>[S] or [Space]</b>: Start / Resume selected downloads</li>"
+            "<li><b>[P] or [Space]</b>: Pause selected downloads</li>"
+            "<li><b>[C]</b>: Cancel selected downloads</li>"
+            "<li><b>[R]</b>: Retry failed downloads</li>"
+            "<li><b>[F]</b>: Force Redownload selected tasks</li>"
+            "<li><b>[Delete] or [Backspace]</b>: Delete selected tasks</li>"
+            "</ul>"
+        )
+        shortcuts_display = QLabel(shortcuts_text)
+        shortcuts_display.setTextFormat(Qt.TextFormat.RichText)
+        layout.addWidget(shortcuts_display)
+        
+        # Warning Section
+        warning_label = QLabel("<b>⚠️ VPN USERS WARNING ⚠️</b>")
+        warning_label.setStyleSheet("color: red; font-size: 14px;")
+        warning_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(warning_label)
+        
+        warning_text = QLabel(
+            "Cloudflare will aggressively block known VPN IPs. If your downloads are "
+            "failing or getting stuck, and you have tried to <i>Force Redownload</i> but "
+            "it keeps failing, <b>TURN OFF YOUR VPN</b>."
+        )
+        warning_text.setWordWrap(True)
+        warning_text.setStyleSheet("color: black; font-weight: bold; padding: 10px; background-color: #ffffff; border-radius: 5px;")
+        layout.addWidget(warning_text)
+        
+        # Don't show again checkbox
+        self.dont_show_checkbox = QCheckBox("Don't show this again")
+        layout.addWidget(self.dont_show_checkbox)
+        
+        # OK Button
+        btn_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok)
+        btn_box.accepted.connect(self.accept)
+        layout.addWidget(btn_box)
+
+    def accept(self):
+        if self.dont_show_checkbox.isChecked():
+            self.settings["show_warning_dialog"] = False
+        super().accept()
+
 class SettingsDialog(QDialog):
     def __init__(self, current_settings, parent=None):
         super().__init__(parent)
@@ -87,7 +154,8 @@ class SettingsDialog(QDialog):
         
         # Save Directory
         dir_layout = QHBoxLayout()
-        self.dir_input = QLineEdit(self.current_settings.get("default_save_dir", "."))
+        default_dir = self.current_settings.get("default_save_dir", os.path.join(os.path.expanduser("~"), "Downloads"))
+        self.dir_input = QLineEdit(default_dir)
         browse_btn = QPushButton("Browse...")
         browse_btn.clicked.connect(self.browse_dir)
         dir_layout.addWidget(self.dir_input)
@@ -112,6 +180,8 @@ class SettingsDialog(QDialog):
         
         # Buttons
         button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
+        self.reset_btn = button_box.addButton("Reset Defaults", QDialogButtonBox.ButtonRole.ResetRole)
+        self.reset_btn.clicked.connect(self.reset_to_defaults)
         button_box.accepted.connect(self.accept)
         button_box.rejected.connect(self.reject)
         layout.addRow(button_box)
@@ -120,14 +190,36 @@ class SettingsDialog(QDialog):
         folder = QFileDialog.getExistingDirectory(self, "Select Save Directory", self.dir_input.text())
         if folder:
             self.dir_input.setText(os.path.abspath(folder))
+
+    def reset_to_defaults(self):
+        reply = QMessageBox.question(
+            self, 'Confirm Reset', 
+            "Are you sure you want to reset all settings to their default values? (Includes showing warnings and UI sizes)",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            if sys.platform == "win32":
+                default_dir = os.path.join(os.path.expanduser("~"), "Downloads")
+            else:
+                default_dir = os.path.abspath(".")
             
+            self.dir_input.setText(default_dir)
+            self.workers_spinbox.setValue(3)
+            self.extract_checkbox.setChecked(False)
+            self.skip_delete_checkbox.setChecked(False)
+            
+            # Reset background invisible settings as well
+            self.current_settings["column_widths"] = {}
+            self.current_settings["show_warning_dialog"] = True
+
     def get_updated_settings(self):
         return {
             "default_save_dir": self.dir_input.text(),
             "max_workers": self.workers_spinbox.value(),
             "extract_after_download": self.extract_checkbox.isChecked(),
             "skip_delete_confirmation": self.skip_delete_checkbox.isChecked(),
-            "column_widths": self.current_settings.get("column_widths", {})
+            "column_widths": self.current_settings.get("column_widths", {}),
+            "show_warning_dialog": self.current_settings.get("show_warning_dialog", True)
         }
 
 class DownloadTask:
@@ -242,6 +334,10 @@ class MainWindow(QMainWindow):
         self.setup_ui()
         self.load_tasks_from_history()
         
+        # Show warning dialog if not disabled
+        if self.settings.get("show_warning_dialog", True):
+            QTimer.singleShot(100, self.show_warning_dialog)
+            
         # Start Background Download Manager
         self.manager_thread = threading.Thread(target=self.download_manager, daemon=True)
         self.manager_thread.start()
@@ -302,6 +398,10 @@ class MainWindow(QMainWindow):
         
         help_menu.addSeparator()
         
+        welcome_action = QAction("&Welcome", self)
+        welcome_action.triggered.connect(self.show_warning_dialog_manual)
+        help_menu.addAction(welcome_action)
+
         about_action = QAction("&About", self)
         about_action.triggered.connect(self.show_about_dialog)
         help_menu.addAction(about_action)
@@ -313,7 +413,8 @@ class MainWindow(QMainWindow):
         # 1. Directory Section
         dir_layout = QHBoxLayout()
         dir_layout.addWidget(QLabel("Base Save Directory:"))
-        self.dir_input = QLineEdit(self.settings.get("default_save_dir", os.path.abspath(".")))
+        default_dir = self.settings.get("default_save_dir", os.path.join(os.path.expanduser("~"), "Downloads"))
+        self.dir_input = QLineEdit(default_dir)
         dir_layout.addWidget(self.dir_input)
         browse_btn = QPushButton("Browse...")
         browse_btn.clicked.connect(self.browse_dir)
@@ -470,6 +571,15 @@ class MainWindow(QMainWindow):
                 return True
             if event.key() == Qt.Key.Key_P:
                 self.pause_selected()
+                return True
+            if event.key() == Qt.Key.Key_Space:
+                # Toggle based on the first selected task's status
+                selected = self.get_selected_tasks()
+                if selected:
+                    if selected[0].status in ("Downloading", "Starting..."):
+                        self.pause_selected()
+                    else:
+                        self.start_downloads()
                 return True
             if event.key() == Qt.Key.Key_C:
                 self.cancel_selected()
@@ -644,8 +754,29 @@ class MainWindow(QMainWindow):
             "<li><b>New:</b> Hover error tooltips and 'Copy Error Details' log extraction.</li>"
             "<li><b>New:</b> Extraction support for Linux and macOS.</li>"
             "</ul>"
+            "<hr>"
+            "<h4>Changelog (v1.2.0 - Short):</h4>"
+            "<ul>"
+            "<li><b>New:</b> Persistent download history and custom column sizing.</li>"
+            "<li><b>New:</b> Batch folders with collapsible tree UI.</li>"
+            "<li><b>New:</b> Live global speed tracking and ETAs.</li>"
+            "<li><b>New:</b> Delete button/key to trash files and tasks.</li>"
+            "<li><b>New:</b> 'Retry' and 'Paste from Clipboard' buttons.</li>"
+            "</ul>"
             "<p><i>See CHANGELOG.md for full details.</i></p>"
         )
+
+    def show_warning_dialog(self):
+        dialog = WarningDialog(self.settings, self)
+        dialog.exec()
+        save_settings(self.settings)
+
+    def show_warning_dialog_manual(self):
+        dialog = WarningDialog(self.settings, self)
+        # Uncheck "Don't show again" visually if they opened it manually
+        dialog.dont_show_checkbox.setChecked(not self.settings.get("show_warning_dialog", True))
+        dialog.exec()
+        save_settings(self.settings)
 
     def open_settings_dialog(self):
         dialog = SettingsDialog(self.settings, self)
@@ -656,7 +787,8 @@ class MainWindow(QMainWindow):
             
             # Apply immediate UI/State updates
             self.max_workers = self.settings.get("max_workers", 3)
-            self.dir_input.setText(self.settings.get("default_save_dir", "."))
+            default_dir = self.settings.get("default_save_dir", os.path.join(os.path.expanduser("~"), "Downloads"))
+            self.dir_input.setText(default_dir)
             self.extract_checkbox.setChecked(self.settings.get("extract_after_download", False))
 
     def browse_dir(self):
@@ -1282,7 +1414,13 @@ class MainWindow(QMainWindow):
         
         try:
             if not os.path.exists(task.save_dir):
-                os.makedirs(task.save_dir, exist_ok=True)
+                try:
+                    os.makedirs(task.save_dir, exist_ok=True)
+                except Exception as e:
+                    task.status = "Error"
+                    task.error_message = f"Failed to create save directory '{task.save_dir}'. {format_error_message(e)}"
+                    self.trigger_history_save()
+                    return
                 
             initial_size = 0
             if os.path.exists(task.filepath):
@@ -1328,30 +1466,36 @@ class MainWindow(QMainWindow):
                 last_time = start_time
                 bytes_since_last = 0
                 
-                with open(task.filepath, mode) as f:
-                    for chunk in r.iter_content(chunk_size=8192*8):
-                        if task.pause_flag:
-                            task.status = "Paused"
-                            task.speed = 0
-                            return
-                        if task.cancel_flag:
-                            task.status = "Cancelled"
-                            task.speed = 0
-                            return
-                            
-                        if chunk:
-                            f.write(chunk)
-                            size = len(chunk)
-                            task.downloaded_bytes += size
-                            bytes_since_last += size
-                            
-                            now = time.time()
-                            if now - last_time > 0.5:
-                                task.speed = (bytes_since_last / (now - last_time)) / (1024*1024)
-                                if task.total_bytes > 0:
-                                    task.progress = (task.downloaded_bytes / task.total_bytes) * 100
-                                last_time = now
-                                bytes_since_last = 0
+                try:
+                    with open(task.filepath, mode) as f:
+                        for chunk in r.iter_content(chunk_size=8192*8):
+                            if task.pause_flag:
+                                task.status = "Paused"
+                                task.speed = 0
+                                return
+                            if task.cancel_flag:
+                                task.status = "Cancelled"
+                                task.speed = 0
+                                return
+                                
+                            if chunk:
+                                f.write(chunk)
+                                size = len(chunk)
+                                task.downloaded_bytes += size
+                                bytes_since_last += size
+                                
+                                now = time.time()
+                                if now - last_time > 0.5:
+                                    task.speed = (bytes_since_last / (now - last_time)) / (1024*1024)
+                                    if task.total_bytes > 0:
+                                        task.progress = (task.downloaded_bytes / task.total_bytes) * 100
+                                    last_time = now
+                                    bytes_since_last = 0
+                except Exception as e:
+                    task.status = "Error"
+                    task.error_message = f"Failed to open or write to file '{task.filepath}'. Check disk space and permissions. {format_error_message(e)}"
+                    self.trigger_history_save()
+                    return
                 
                 task.progress = 100
                 task.speed = 0
