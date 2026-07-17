@@ -428,9 +428,11 @@ class MainWindow(QMainWindow):
         check_update_action.triggered.connect(self.manual_update_check)
         help_menu.addAction(check_update_action)
 
-        about_action = QAction("&About", self)
+        about_menu = menu_bar.addMenu("&About")
+        
+        about_action = QAction("&About SilverSpoon", self)
         about_action.triggered.connect(self.show_about_dialog)
-        help_menu.addAction(about_action)
+        about_menu.addAction(about_action)
         
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
@@ -768,10 +770,20 @@ class MainWindow(QMainWindow):
 
     def show_about_dialog(self):
         QMessageBox.about(self, "About SilverSpoon",
-            "<h3>SilverSpoon v1.2.1</h3>"
-            "<p>A simple, fast bulk downloader for FuckingFast links.</p>"
+            "<h3>SilverSpoon v1.3.0</h3>"
+            "<p>A simple, fast bulk downloader for FuckingFast links developed by billysams21.</p>"
             "<p>Select your links, paste them in, and hit Add!</p>"
             "<p>Licensed under the GNU GPLv3.</p>"
+            "<hr>"
+            "<h4>Changelog (v1.3.0 - Short):</h4>"
+            "<ul>"
+            "<li><b>New:</b> Built-in auto-updater for Windows executables.</li>"
+            "<li><b>New:</b> VPN warning dialog to help with Cloudflare blocking.</li>"
+            "<li><b>New:</b> Default save directory smartly falls back to user Downloads folder.</li>"
+            "<li><b>New:</b> Reset Settings to Defaults button.</li>"
+            "<li><b>New:</b> Toggle pause/resume with the Spacebar.</li>"
+            "<li><b>Fix:</b> Better directory creation error handling during downloads.</li>"
+            "</ul>"
             "<hr>"
             "<h4>Changelog (v1.2.1 - Short):</h4>"
             "<ul>"
@@ -779,15 +791,6 @@ class MainWindow(QMainWindow):
             "<li><b>New:</b> Force Redownload action.</li>"
             "<li><b>New:</b> Hover error tooltips and 'Copy Error Details' log extraction.</li>"
             "<li><b>New:</b> Extraction support for Linux and macOS.</li>"
-            "</ul>"
-            "<hr>"
-            "<h4>Changelog (v1.2.0 - Short):</h4>"
-            "<ul>"
-            "<li><b>New:</b> Persistent download history and custom column sizing.</li>"
-            "<li><b>New:</b> Batch folders with collapsible tree UI.</li>"
-            "<li><b>New:</b> Live global speed tracking and ETAs.</li>"
-            "<li><b>New:</b> Delete button/key to trash files and tasks.</li>"
-            "<li><b>New:</b> 'Retry' and 'Paste from Clipboard' buttons.</li>"
             "</ul>"
             "<p><i>See CHANGELOG.md for full details.</i></p>"
         )
